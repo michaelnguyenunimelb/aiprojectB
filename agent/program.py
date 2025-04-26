@@ -9,6 +9,7 @@ from referee.game.board import Board, CellState
 from referee.game.constants import BOARD_N
 
 import random
+import time
 
 class Agent:
     """
@@ -39,6 +40,9 @@ class Agent:
             self.board[Coord(BOARD_N-1,c)] = CellState(PlayerColor.BLUE)
             for r in [1,BOARD_N-2]:
                 self.board[Coord(r,c)] = CellState("LilyPad")
+        
+        self.time_calculating = 0
+
 
     def action(self, **referee: dict) -> Action:
         """
@@ -46,33 +50,12 @@ class Agent:
         to take an action. It must always return an action object. 
         """
 
-        # Below we have hardcoded two actions to be played depending on whether
-        # the agent is playing as BLUE or RED. Obviously this won't work beyond
-        # the initial moves of the game, so you should use some game playing
-        # technique(s) to determine the best action to take.
-        match self._color:
-            case PlayerColor.RED:
-                print("Testing: RED is playing a MOVE action")
-
-            case PlayerColor.BLUE:
-                print("Testing: BLUE is playing a GROW action")
-            
-            # return MoveAction(
-                #     Coord(0, 3),
-                #     [Direction.Down]
-                # )
-
-        moves = generate_moves(self.board,self._color)
-
-        bro = random.choice(moves)
-        if isinstance(bro, GrowAction):                                
-            return GrowAction()
-        else:
-            move, dest = bro
-            start = move.coord
-
-            return move
-
+        best_eval, best_move = minimax(self.board, self._color, 4, -float('inf'), float('inf'))
+        if isinstance(best_move, GrowAction):
+            return best_move
+        
+        return best_move.moveaction
+    
 
 
     def update(self, color: PlayerColor, action: Action, **referee: dict):
@@ -85,48 +68,37 @@ class Agent:
         # which type of action was played and print out the details of the
         # action for demonstration purposes. You should replace this with your
         # own logic to update your agent's internal game state representation.
-        match action:
-            case MoveAction(coord, dirs):
-                dirs_text = ", ".join([str(dir) for dir in dirs])
-                print(f"Testing: {color} played MOVE action:")
-                print(f"  Coord: {coord}")
-                print(f"  Directions: {dirs_text}")
-            case GrowAction():
-                print(f"Testing: {color} played GROW action")
-            case _:
-                raise ValueError(f"Unknown action type: {action}")
         
         match action:
             case MoveAction(coord, dirs):
                 curr_coord = coord
                 for di in dirs:
-                    
-                    if isinstance(self.board[curr_coord+di].state, PlayerColor):
-                        curr_coord += di * 2
-                    elif self.board[curr_coord+di].state == 'LilyPad':
-                        curr_coord += di
-                    else:
-                        raise Exception("dawg")
+                    try:
+                        if isinstance(self.board[curr_coord+di].state, PlayerColor):
+                            curr_coord += di * 2
+                        elif self.board[curr_coord+di].state == 'LilyPad':
+                            curr_coord += di
+                        else:
+                            raise Exception("dawg")
+                    except:
+                        continue
                     
                 
                 self.board[coord] = CellState(None)
                 self.board[curr_coord] = CellState(color)
                     
             case GrowAction():
-                new_board = self.board.copy()
-                for coord in self.board:
-                    if self.board[coord].state == color:
-                        for direc in Direction:
-                            try: 
-                                new = coord + direc
-                                if new not in self.board or self.board[new].state == None:
-                                    new_board[new] = CellState("LilyPad")
-                            except:
-                                continue
-
+                new_board = grow_board(self.board, color)
                 self.board = new_board
-
-
+        
+        # wtf = Board(self.board)
+        # print(wtf.render(use_color=True))
+        
+class FrogMove:
+    def __init__(self, moveaction, src, dst):
+        self.moveaction = moveaction
+        self.src = src
+        self.dst = dst
 
 def generate_moves(board: dict[Coord, CellState], turn: PlayerColor):
     directions = [Direction.Left, Direction.DownLeft, Direction.Down, Direction.DownRight, Direction.Right]
@@ -142,7 +114,6 @@ def generate_moves(board: dict[Coord, CellState], turn: PlayerColor):
     moves.append(GrowAction())
     return moves
     
-
 def generate_frog_moves(board, coord, directions, moves):
     # generate all moves for a frog
 
@@ -150,7 +121,7 @@ def generate_frog_moves(board, coord, directions, moves):
         try:
             next_square = coord + direc
             if board[next_square].state == "LilyPad":
-                moves.append((MoveAction(coord=coord, _directions=[direc]), next_square))
+                moves.append(FrogMove(MoveAction(coord=coord, _directions=[direc]), coord, next_square))
         except:
             continue
     
@@ -181,9 +152,22 @@ def generate_jump_moves(board: dict[Coord, CellState], coord: Coord, directions:
             and next_next_square not in visited:
             
             new_path = path + [direc]
-            moves.append((MoveAction(coord=start_coord, _directions=new_path), next_next_square))
+            moves.append(FrogMove(MoveAction(coord=start_coord, _directions=new_path), start_coord, next_next_square))
             generate_jump_moves(board, next_next_square, directions, visited, new_path, start_coord, moves)
 
+def grow_board(board, color):
+    new_board = board.copy()
+    for coord in board:
+        if board[coord].state == color:
+            for direc in Direction:
+                try: 
+                    new = coord + direc
+                    if new not in board or board[new].state == None:
+                        new_board[new] = CellState("LilyPad")
+                except:
+                    continue
+    
+    return new_board
 
 def simple_eval(board: dict[Coord, CellState]) -> float:
     # function that quickly estimates the evaluation score of a board
@@ -199,8 +183,45 @@ def simple_eval(board: dict[Coord, CellState]) -> float:
     
     return red_distance - blue_distance
 
-def minimax(board: dict[Coord, CellState], turn: PlayerColor, depth):
+def minimax(board: dict[Coord, CellState], turn: PlayerColor, depth, alpha, beta):
     # red is maximising player, blue is minimising
 
     if depth == 0:
-        return simple_eval(board)
+        return (simple_eval(board), None)
+    
+    moves = generate_moves(board, turn)
+    
+    best_eval = -float("inf")
+    best_move = None
+    nextcolor = PlayerColor.RED
+    if turn == PlayerColor.BLUE:
+        nextcolor = PlayerColor.RED
+        best_eval = float("inf")
+    
+    for move in moves:
+        if isinstance(move, GrowAction):
+            new_board = grow_board(board, turn)
+            be, bm = minimax(new_board, nextcolor, depth-1, alpha, beta)
+
+        else:
+            new_board = board.copy()
+            new_board[move.src], new_board[move.dst] = CellState(None), CellState(turn) 
+            be, bm = minimax(new_board, nextcolor, depth-1, alpha, beta)
+
+        if turn == PlayerColor.RED:
+            if be > best_eval:
+                best_eval = be
+                best_move = move 
+            alpha = max(alpha, be)
+            if beta <= alpha:
+                break
+        else:
+            if be < best_eval:
+                best_eval = be
+                best_move = move
+            
+            beta = min(beta, be)
+            if beta <= alpha:
+                break
+    
+    return best_eval, best_move
