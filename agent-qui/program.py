@@ -8,7 +8,7 @@ from referee.game import PlayerColor, Coord, Direction, \
 
 from referee.game.board import Board, CellState
 from referee.game.constants import BOARD_N
-TT_SIZE = 5000011
+TT_SIZE = 2000003
 VAL_WINDOW = 3
 HALF_BOARD = (BOARD_N-1)/2
 NUM_FROGS = 6
@@ -66,6 +66,7 @@ class Agent:
                         FrogMove((0,5), (2,3), [(0,-1),(1,0)]), FrogMove((7,2), (5,4), [(0,1),(-1,0)])]
 
         self.endrow = {Cell.RED: 0, Cell.BLUE: 0}
+        self.last3rows = {Cell.RED: 0, Cell.BLUE: 0}
         
     def action(self, **referee: dict) -> Action:
         """
@@ -185,6 +186,10 @@ class Agent:
             if (self.current_color == Cell.RED and sr < BOARD_N-1 and dr == BOARD_N-1) or \
                 (self.current_color == Cell.BLUE and sr > 0 and dr == 0) :
                 self.endrow[self.current_color] += 1
+            
+            if (self.current_color == Cell.RED and sr < BOARD_N-3 and dr >= BOARD_N-3) or \
+                (self.current_color == Cell.BLUE and sr > 3 and dr <= 3) :
+                self.last3rows[self.current_color] += 1
         
         self.edit_hash(move)
         self.switch_color()
@@ -213,6 +218,10 @@ class Agent:
             if (self.current_color == Cell.RED and sr < BOARD_N-1 and dr == BOARD_N-1) or \
                 (self.current_color == Cell.BLUE and sr > 0 and dr == 0) :
                 self.endrow[self.current_color] += 1
+            
+            if (self.current_color == Cell.RED and sr < BOARD_N-3 and dr >= BOARD_N-3) or \
+                (self.current_color == Cell.BLUE and sr > 3 and dr <= 3) :
+                self.last3rows[self.current_color] += 1
 
         
         self.edit_hash(move)
@@ -236,6 +245,10 @@ class Agent:
             if (self.current_color == Cell.RED and sr < BOARD_N-1 and dr == BOARD_N-1) or \
                 (self.current_color == Cell.BLUE and sr > 0 and dr == 0) :
                 self.endrow[self.current_color] -= 1
+            
+            if (self.current_color == Cell.RED and sr < BOARD_N-3 and dr >= BOARD_N-3) or \
+                (self.current_color == Cell.BLUE and sr > 3 and dr <= 3) :
+                self.last3rows[self.current_color] -= 1
 
     def switch_color(self):
         if self.current_color == Cell.RED:
@@ -244,11 +257,13 @@ class Agent:
             self.current_color = Cell.RED
 
     def minimax(self, depth, alpha, beta, storebest=None):
-
         if self.endrow[Cell.RED] == NUM_FROGS:
             return BIG_NUM+self.simple_eval()
         if self.endrow[Cell.BLUE] == NUM_FROGS:
             return -BIG_NUM+self.simple_eval()
+        
+        if self.last3rows[Cell.RED] == NUM_FROGS and self.last3rows[Cell.BLUE] == NUM_FROGS:
+            return self.endgame_search(storebest)
 
         index = self.hash % TT_SIZE
         if self.tt[index] != None and self.tt[index].key == self.hash and \
@@ -278,29 +293,18 @@ class Agent:
         else:
             moves.sort(key= lambda x: -x.prio)
 
-        pv_found = False
         if self.current_color == Cell.RED:
             best_eval = -float('inf')
             flag = Flag.LESS
             for m in moves:
                 self.apply_move(m)
-                new_eval = 0
-                if pv_found:
-                    new_eval = self.minimax(depth-1, alpha, alpha + 0.1)
-                    if new_eval > alpha and new_eval < beta:
-                        new_eval = self.minimax(depth-1,alpha,beta)
-                else:
-                    new_eval = self.minimax(depth-1, alpha, beta)
-
+                new_eval = self.minimax(depth-1, alpha, beta)
                 self.undo_move(m)
                 if new_eval > best_eval:
                     best_eval = new_eval
+                    alpha = max(alpha, new_eval)
                     best_move = m
                     flag = Flag.EXACT
-                
-                if new_eval > alpha:
-                    alpha = new_eval
-                    pv_found = True
 
                 if beta <= alpha:
                     flag = Flag.MORE
@@ -310,23 +314,13 @@ class Agent:
             flag = Flag.MORE
             for m in moves:
                 self.apply_move(m)
-                new_eval = 0
-                if pv_found:
-                    new_eval = self.minimax(depth-1, beta - 0.1, beta)
-                    if new_eval > alpha and new_eval < beta:
-                        new_eval = self.minimax(depth-1, alpha, beta)
-                else:
-                    new_eval = self.minimax(depth-1, alpha, beta)   
+                new_eval = self.minimax(depth-1, alpha, beta)   
                 self.undo_move(m)
                 if new_eval < best_eval:
                     best_eval = new_eval
                     beta = min(beta, new_eval)
                     best_move = m
                     flag = Flag.EXACT
-                
-                if new_eval < beta:
-                    beta = new_eval
-                    pv_found = True
 
                 if beta <= alpha:
                     flag = Flag.LESS
@@ -375,7 +369,18 @@ class Agent:
         print("CURR EVAL: ", val)
         return storedmove[0]
 
+    def endgame_search(self, storebest=None):
+        if self.endrow[Cell.RED] == NUM_FROGS:
+            return BIG_NUM+self.simple_eval()
+        if self.endrow[Cell.BLUE] == NUM_FROGS:
+            return -BIG_NUM+self.simple_eval()
+        
+        moves = self.generate_moves()
+        moves.sort(key=lambda x: -x.prio)
+        
+        best_move, best_eval = None, None
 
+        
 
 class Cell(IntEnum):
     NONE = 0

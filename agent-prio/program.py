@@ -8,11 +8,7 @@ from referee.game import PlayerColor, Coord, Direction, \
 
 from referee.game.board import Board, CellState
 from referee.game.constants import BOARD_N
-TT_SIZE = 5000011
-VAL_WINDOW = 3
-HALF_BOARD = (BOARD_N-1)/2
-NUM_FROGS = 6
-BIG_NUM = 1000000
+TT_SIZE = 1000003
 
 import random
 import time
@@ -55,30 +51,20 @@ class Agent:
                 self.board[r][c] = Cell.LILY
         
         self.time = 0
-        # self.print_board()
+        self.print_board()
         self.tt = [None] * TT_SIZE
         self.hash = self.get_hash()
+
         self.movenum = 0
 
-        self.opening = [FrogMove((0,3), (1,3), [(1,0)]), FrogMove((7,4), (6,4), [(-1,0)]), 
-                        GrowMove(set()), GrowMove(set()),
-                        FrogMove((0,2), (4,2), [(1,1)]), FrogMove((7,5), (5,3), [(-1,-1)]), 
-                        FrogMove((0,5), (2,3), [(0,-1),(1,0)]), FrogMove((7,2), (5,4), [(0,1),(-1,0)])]
-
-        self.endrow = {Cell.RED: 0, Cell.BLUE: 0}
-        
     def action(self, **referee: dict) -> Action:
         """
         This method is called by the referee each time it is the agent's turn
         to take an action. It must always return an action object. 
         """
-        best_move = None
-        if self.movenum < 8:
-            best_move = self.opening[self.movenum]
-        else:
-            start_time = time.time()
-            best_move = self.iterative_deepening(6)
-            self.time += time.time() - start_time
+        start_time = time.time()
+        best_move = self.iterative_deepening(6)
+        self.time += time.time() - start_time
 
         print("AGENT bro: ", self.time)
         return move_to_action(best_move)
@@ -91,8 +77,6 @@ class Agent:
     
         self.make_move(action)
         # print_board(self.board)
-        # print(referee['space_remaining'])     
-        # print("RED: ", self.endrow[Cell.RED], "BLUE: ", self.endrow[Cell.BLUE])  
 
     def print_board(self):
         board_dict = dict()
@@ -181,10 +165,6 @@ class Agent:
             self.frogs[self.current_color].remove((sr,sc))
             self.frogs[self.current_color].add((dr,dc))
             move = FrogMove((sr, sc), (dr, dc), None)
-
-            if (self.current_color == Cell.RED and sr < BOARD_N-1 and dr == BOARD_N-1) or \
-                (self.current_color == Cell.BLUE and sr > 0 and dr == 0) :
-                self.endrow[self.current_color] += 1
         
         self.edit_hash(move)
         self.switch_color()
@@ -210,10 +190,6 @@ class Agent:
             self.board[dr][dc] = self.current_color
             self.frogs[self.current_color].remove((sr,sc))
             self.frogs[self.current_color].add((dr,dc))
-            if (self.current_color == Cell.RED and sr < BOARD_N-1 and dr == BOARD_N-1) or \
-                (self.current_color == Cell.BLUE and sr > 0 and dr == 0) :
-                self.endrow[self.current_color] += 1
-
         
         self.edit_hash(move)
         self.switch_color()
@@ -231,11 +207,7 @@ class Agent:
             self.board[dr][dc] = Cell.LILY
             self.board[sr][sc] = self.current_color
             self.frogs[self.current_color].remove((dr,dc))
-            self.frogs[self.current_color].add((sr,sc))
-            
-            if (self.current_color == Cell.RED and sr < BOARD_N-1 and dr == BOARD_N-1) or \
-                (self.current_color == Cell.BLUE and sr > 0 and dr == 0) :
-                self.endrow[self.current_color] -= 1
+            self.frogs[self.current_color].add((sr,sc))  
 
     def switch_color(self):
         if self.current_color == Cell.RED:
@@ -245,24 +217,15 @@ class Agent:
 
     def minimax(self, depth, alpha, beta, storebest=None):
 
-        if self.endrow[Cell.RED] == NUM_FROGS:
-            return BIG_NUM+self.simple_eval()
-        if self.endrow[Cell.BLUE] == NUM_FROGS:
-            return -BIG_NUM+self.simple_eval()
-
         index = self.hash % TT_SIZE
         if self.tt[index] != None and self.tt[index].key == self.hash and \
                 self.tt[index].depth >= depth:
-            val = False
-            if self.tt[index].flag == Flag.EXACT or \
-                    (self.tt[index].flag == Flag.LESS and self.tt[index].val <= alpha) or \
-                    (self.tt[index].flag == Flag.MORE and self.tt[index].val >= beta):
-                val = self.tt[index].val
-
-            if val != False:
-                if storebest != None:
-                    storebest.append(self.tt[index].move)
-                return val
+            if self.tt[index].flag == Flag.EXACT:
+                return self.tt[index].val
+            if self.tt[index].flag == Flag.LESS and self.tt[index].val <= alpha:
+                return alpha
+            if self.tt[index].flag == Flag.MORE and self.tt[index].val >= beta:
+                return beta
         
         if depth == 0:
             val = self.simple_eval()
@@ -278,56 +241,37 @@ class Agent:
         else:
             moves.sort(key= lambda x: -x.prio)
 
-        pv_found = False
         if self.current_color == Cell.RED:
-            best_eval = -float('inf')
+            best_eval = alpha
             flag = Flag.LESS
             for m in moves:
                 self.apply_move(m)
-                new_eval = 0
-                if pv_found:
-                    new_eval = self.minimax(depth-1, alpha, alpha + 0.1)
-                    if new_eval > alpha and new_eval < beta:
-                        new_eval = self.minimax(depth-1,alpha,beta)
-                else:
-                    new_eval = self.minimax(depth-1, alpha, beta)
-
+                new_eval = self.minimax(depth-1, alpha, beta)
                 self.undo_move(m)
-                if new_eval > best_eval:
+                if new_eval > alpha:
+                    alpha = new_eval
                     best_eval = new_eval
                     best_move = m
                     flag = Flag.EXACT
-                
-                if new_eval > alpha:
-                    alpha = new_eval
-                    pv_found = True
 
                 if beta <= alpha:
                     flag = Flag.MORE
                     break
         else:
-            best_eval = float('inf')
+            best_eval = beta
             flag = Flag.MORE
             for m in moves:
                 self.apply_move(m)
-                new_eval = 0
-                if pv_found:
-                    new_eval = self.minimax(depth-1, beta - 0.1, beta)
-                    if new_eval > alpha and new_eval < beta:
-                        new_eval = self.minimax(depth-1, alpha, beta)
-                else:
-                    new_eval = self.minimax(depth-1, alpha, beta)   
+                new_eval = self.minimax(depth-1, alpha, beta)            
                 self.undo_move(m)
-                if new_eval < best_eval:
+                if new_eval < beta:
+                    beta = new_eval
                     best_eval = new_eval
-                    beta = min(beta, new_eval)
                     best_move = m
                     flag = Flag.EXACT
                 
                 if new_eval < beta:
                     beta = new_eval
-                    pv_found = True
-
                 if beta <= alpha:
                     flag = Flag.LESS
                     break
@@ -359,18 +303,9 @@ class Agent:
 
     def iterative_deepening(self, max_depth):
         storedmove = []
-        alpha, beta = -float('inf'), float('inf')
-        depth = 1
-        while depth <= max_depth:
+        for depth in range(1, max_depth+1):
             storedmove = []
-            val = self.minimax(depth, alpha, beta, storebest=storedmove)
-            if val <= alpha or val >= beta:
-                alpha, beta = -float('inf'), float('inf')
-                continue
-                
-            alpha, beta = val-VAL_WINDOW, val+VAL_WINDOW
-            depth += 1
-
+            val = self.minimax(depth, -float("inf"), float("inf"), storebest=storedmove)
         
         print("CURR EVAL: ", val)
         return storedmove[0]
@@ -462,5 +397,5 @@ def square_eval(r, c, color):
         row_progress = BOARD_N - 1 - r
     
     center = (BOARD_N-1)/2
-    positional_score = 0.4 * (center - max(abs(center - r), abs(center - c)))
+    positional_score = 0.3 * (center - max(abs(center - r), abs(center - c)))
     return row_progress + positional_score
